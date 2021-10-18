@@ -2,7 +2,7 @@ import functools
 import typing
 from pyrogram.errors import RPCError
 import time
-import exceptions
+from . import exceptions
 
 def retry(max_num: int, allowed_errors: list[typing.Type[Exception]] = None, sleep_time:float = 1):
     if allowed_errors is None:

@@ -1,13 +1,13 @@
 import typing
 from pydantic import BaseModel
-import utils
+from . import utils
 import json
 import pyrogram
-from exceptions import WrongIndexException
-import abstract
+from .exceptions import WrongIndexException
+from . import abstract
 import io
-import exceptions
-import asyncio
+from . import exceptions
+
 
 class FileSystemIndex(BaseModel):
     files: dict[str, int]
@@ -45,6 +45,10 @@ class TelegramFileSystem:
         self._index = index
         self._chat_id = chat_id
         self._client = client
+    
+    @property
+    def files(self) -> typing.Iterable[str]:
+        return iter(self._index.files)
     
     @classmethod
     async def with_telegram_api(cls, api: "TelegramApi", client: pyrogram.Client, chat_id: str | int, index_name: str) -> "TelegramFileSystem":

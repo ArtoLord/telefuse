@@ -8,3 +8,7 @@ class RetryableError(Exception):
 
 class FileNotFound(Exception):
     pass
+
+
+class CommandValidationError(Exception):
+    pass
