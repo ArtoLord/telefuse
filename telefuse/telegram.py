@@ -57,7 +57,7 @@ class TelegramFileSystem:
     
     async def init_file(self, file: abstract.File) -> None:
         msg_id = self._index.files.get(file.path)
-        msg_id = await self._api.upload_file(self._chat_id, file, msg_id=msg_id)
+        msg_id = await self._api.upload_file(self._chat_id, file, msg_id=msg_id, progres=file.progress)
         self._index.files[file.path] = msg_id
         await self._index.save(self._client, self._chat_id)
     
@@ -65,7 +65,7 @@ class TelegramFileSystem:
         msg_id = self._index.files.get(file.path)
         if msg_id is None:
             raise exceptions.FileNotFound(f"No file {file.path} in index")
-        await self._api.download_file(chat_id=self._chat_id, file_path=file.real_path, msg_id=msg_id)
+        await self._api.download_file(chat_id=self._chat_id, file_path=file.real_path, msg_id=msg_id, progres=file.progress)
     
     async def remove_file(self, file: abstract.File) -> None:
         msg_id = self._index.files.get(file.path)
@@ -96,7 +96,7 @@ class TelegramApi:
         return msg.message_id
         
     @utils.retry(3)
-    async def upload_file(self, chat_id: str | int, file: abstract.File, msg_id: int = None) -> int:
+    async def upload_file(self, chat_id: str | int, file: abstract.File, msg_id: int = None, progres=lambda x, y: None) -> int:
         async with self._client:
             if msg_id is not None:
                 msg = await self._client.edit_message_media(
@@ -112,19 +112,21 @@ class TelegramApi:
                 chat_id=chat_id,
                 document=file.real_path,
                 file_name=file.name,
-                force_document=True
+                force_document=True,
+                progress=progres
             )
             if msg is None:
                 raise exceptions.RetryableError(f"Cannot upload file {file.name}")
             return msg.message_id
     
     @utils.retry(3)
-    async def download_file(self, chat_id: str | int, file_path: str, msg_id: int):
+    async def download_file(self, chat_id: str | int, file_path: str, msg_id: int, progres=lambda x, y: None):
         async with self._client:
             msg = await self._client.get_messages(chat_id=chat_id, message_ids=msg_id)
             await self._client.download_media(
                 msg,
-                file_name=file_path
+                file_name=file_path,
+                progress=progres
             )
     
     @utils.retry(3)

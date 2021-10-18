@@ -9,6 +9,7 @@ from . import abstract
 import os
 import json
 from . import config
+from . import utils
 
 
 class File(abstract.File):
@@ -16,6 +17,16 @@ class File(abstract.File):
         self.path = path
         self.name = os.path.basename(path)
         self.real_path = real_path
+    
+    def progress(self, curr: int, total: int):
+        utils.printProgressBar(
+            iteration=curr,
+            total=total,
+            prefix=f"{self.name}",
+            suffix=f"{curr}/{total}",
+            length=10,
+            decimals=10,
+        )
 
 
 class Command(abc.ABC):
