@@ -1,6 +1,7 @@
 from . import telegram
 from . import config
 from . import abstract
+import os
 import asyncio
 from asyncinotify import Inotify, Mask
 import typing
@@ -19,7 +20,8 @@ class Wather:
     async def wather_coro(self, main_dir: str, fs_config: config.FsConfig):
         files = set(self.fs.files)
         with Inotify() as inotify:
-            inotify.add_watch(main_dir, Mask.MODIFY | Mask.DELETE)
+            for dirname, _, _ in os.walk(main_dir):
+                inotify.add_watch(os.path.abspath(dirname), Mask.MODIFY | Mask.DELETE)
             async for event in inotify:
                 if event.path is None:
                     continue
