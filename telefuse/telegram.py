@@ -8,6 +8,7 @@ from . import abstract
 import os
 from . import exceptions
 import asyncio
+import itertools
 
 
 class TelegramFile(BaseModel):
@@ -33,26 +34,38 @@ class FileSystemIndex(BaseModel):
     
     @classmethod
     @utils.retry(3)
-    async def _get(cls, client: pyrogram.Client, chat_id: str | int, index_name: str) -> "FileSystemIndex":
-        res = client.search_messages(chat_id=chat_id, query=f"[{index_name}]", limit=1)
+    async def _get(cls, client: pyrogram.Client, chat_id: str | int, index_name: str, location: str) -> "FileSystemIndex":
+        res = client.search_messages(chat_id=chat_id, query=f"[{index_name}]", limit=1, filter="document")
         try:
             res = await res.__anext__()
         except StopAsyncIteration:
             raise WrongIndexException(f"Can not find index with name {index_name}")
+
+        await client.download_media(res, location)
         
-        msg = res.text
-        msg = ''.join(msg.split('\n')[1:])
+        with open(location, 'r') as f:
+            msg = json.load(f)
         try:
-            return cls(**json.loads(msg))
+            return cls(**msg)
         except Exception:
             raise WrongIndexException("Index is corrupted")
     
     @utils.retry(3)
-    async def save(self, client: pyrogram.Client, chat_id: str | int):
+    async def save(self, client: pyrogram.Client, chat_id: str | int, location: str):
+        with open(location, 'w') as f:
+            f.write(self.json())
         if self.message_id == 0:
-            msg = await client.send_message(chat_id=chat_id, text=f"[{self.index_name}]\n{self.json()}")
+            msg = await client.send_document(chat_id=chat_id, document=location, caption=f"[{self.index_name}]")
+            if msg is None:
+                raise exceptions.RetryableError("Cannot save index")
             self.message_id = msg.message_id
-        await client.edit_message_text(chat_id=chat_id, text=f"[{self.index_name}]\n{self.json()}", message_id=self.message_id)
+            with open(location, 'w') as f:
+                f.write(self.json())
+        await client.edit_message_media(chat_id=chat_id, message_id=self.message_id, media=pyrogram.types.InputMediaDocument(
+                    media=location,
+                    caption=f"[{self.index_name}]"
+                )
+            )
 
 
 class OperationCtx:
@@ -117,11 +130,12 @@ class OperationCtx:
 
 class TelegramFileSystem:
     
-    def __init__(self, api: "TelegramApi", index: FileSystemIndex, chat_id: str | int, client: pyrogram.Client) -> None:
+    def __init__(self, api: "TelegramApi", index: FileSystemIndex, chat_id: str | int, client: pyrogram.Client, location: str) -> None:
         self._api = api
         self._index = index
         self._chat_id = chat_id
         self._client = client
+        self._location = location
     
     @property
     def files(self) -> typing.Iterable[str]:
@@ -131,16 +145,16 @@ class TelegramFileSystem:
         return self._index.files.get(file_path)
     
     @classmethod
-    async def with_telegram_api(cls, api: "TelegramApi", client: pyrogram.Client, chat_id: str | int, index_name: str) -> "TelegramFileSystem":
-        index = await FileSystemIndex._get(client=client, chat_id=chat_id, index_name=index_name)
-        return cls(api, index, chat_id, client)
+    async def with_telegram_api(cls, api: "TelegramApi", client: pyrogram.Client, chat_id: str | int, index_name: str, location: str) -> "TelegramFileSystem":
+        index = await FileSystemIndex._get(client=client, chat_id=chat_id, index_name=index_name, location=location)
+        return cls(api, index, chat_id, client, location)
     
     async def init_file(self, file: abstract.File, with_save: bool = True) -> None:
         msg_id = None if not self._index.files.get(file.path) else self._index.files[file.path].msg_id
         curr_msg_id = await self._api.upload_file(self._chat_id, file, msg_id=msg_id, progres=file.progress)
         self._index.files[file.path] = TelegramFile.from_abstract(file, curr_msg_id)
         if with_save:
-            await self._index.save(self._client, self._chat_id)
+            await self._index.save(self._client, self._chat_id, self._location)
     
     async def get_file(self, file: abstract.File):
         f = self._index.files.get(file.path)
@@ -155,13 +169,13 @@ class TelegramFileSystem:
         await self._api.delete_msg(self._chat_id, f.msg_id)
         self._index.files.pop(file.path)
         if with_save:
-            await self._index.save(self._client, self._chat_id)
+            await self._index.save(self._client, self._chat_id, self._location)
     
     async def save(self):
-        await self._index.save(self._client, self._chat_id)
+        await self._index.save(self._client, self._chat_id, self._location)
     
     def clone(self) -> "TelegramFileSystem":
-        return TelegramFileSystem(self._api, self._index.copy(), self._chat_id, self._client)
+        return TelegramFileSystem(self._api, self._index.copy(), self._chat_id, self._client, self._location)
     
     def operation(self, max_inflight: int = 15) -> OperationCtx:
         return OperationCtx(self.clone(), max_inflight)

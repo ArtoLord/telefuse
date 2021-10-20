@@ -33,8 +33,9 @@ def main():
     
     try:
         client.run(args.func(args))
-    except AttributeError:
+    except AttributeError as e:
         print("Wrong command. Run with --help to see help")
+        print(e)
 
 
 if __name__ == '__main__':

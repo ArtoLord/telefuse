@@ -115,7 +115,8 @@ class FileCommand(Command, abc.ABC):
             telegram.TelegramApi(client),
             client,
             fs_config.chat_id,
-            fs_config.index_name
+            fs_config.index_name,
+            os.path.join(fs_config.dir_path, '.telefs_index')
         )
         
         progress_bar = ProgressBar()
@@ -130,6 +131,8 @@ class FileCommand(Command, abc.ABC):
                             os.path.join(file_path, dirpath, filename)
                             for filename in filenames
                         }
+        files.remove(os.path.join(fs_config.dir_path, '.telefs_index'))
+        files.remove(os.path.join(fs_config.dir_path, '.telefs'))
         async with fs.operation() as op:
             for file_path in files:
                 if cls.must_exist and not os.path.exists(file_path):
@@ -222,7 +225,7 @@ class Init(Command):
             index_name=args.index_name,
             files={}
         )
-        await index.save(client, args.id)
+        await index.save(client, args.id, os.path.join(os.path.abspath(os.getcwd()), ".telefs_index"))
 
 
 class Clone(Command):
@@ -245,7 +248,8 @@ class Clone(Command):
         
         old_fs = await telegram.TelegramFileSystem.with_telegram_api(
             telegram_api,
-            client, args.from_id, args.old_index_name
+            client, args.from_id, args.old_index_name,
+            os.path.join(os.path.abspath(os.getcwd()), '.telefs_index')
         )
         
         progress_bar = ProgressBar()
@@ -258,7 +262,8 @@ class Clone(Command):
             index_name=args.new_index_name,
             files={}
         )
-        await new_index.save(client, args.to_id)
+
+        await new_index.save(client, args.to_id, os.path.join(os.path.abspath(os.getcwd()), ".telefs_index"))
         
         fs_config = config.FsConfig(
             session=client.session_name,
@@ -274,7 +279,8 @@ class Clone(Command):
             telegram_api,
             new_index,
             args.to_id,
-            client
+            client,
+            os.path.join(os.path.abspath(os.getcwd()), '.telefs_index')
         )
         
         progress_bar = ProgressBar()
@@ -298,7 +304,6 @@ def get_differs_files(fs: telegram.TelegramFileSystem, fs_config: config.FsConfi
             continue
         if utils.hash_file(current_filepath) != telegram_file.filehash:
             differs.add(filepath)
-    
     return differs, deleted
 
 
@@ -316,7 +321,8 @@ class Status(Command):
             telegram.TelegramApi(client),
             client,
             fs_config.chat_id,
-            fs_config.index_name
+            fs_config.index_name,
+            os.path.join(fs_config.dir_path, '.telefs_index')
         )
         
         print(f"Currently in index `{fs_config.index_name}`:")
@@ -355,7 +361,8 @@ class Download(Command):
             telegram.TelegramApi(client),
             client,
             fs_config.chat_id,
-            fs_config.index_name
+            fs_config.index_name,
+            os.path.join(fs_config.dir_path, '.telefs_index')
         )
         differs, deleted = get_differs_files(fs, fs_config)
         
@@ -381,7 +388,8 @@ class Upload(Command):
             telegram.TelegramApi(client),
             client,
             fs_config.chat_id,
-            fs_config.index_name
+            fs_config.index_name,
+            os.path.join(fs_config.dir_path, '.telefs_index')
         )
         differs, deleted = get_differs_files(fs, fs_config)
         
