@@ -5,7 +5,7 @@ import json
 import pyrogram
 from .exceptions import WrongIndexException
 from . import abstract
-import io
+import os
 from . import exceptions
 import asyncio
 
@@ -39,6 +39,7 @@ class FileSystemIndex(BaseModel):
             res = await res.__anext__()
         except StopAsyncIteration:
             raise WrongIndexException(f"Can not find index with name {index_name}")
+        
         msg = res.text
         msg = ''.join(msg.split('\n')[1:])
         try:
@@ -169,21 +170,15 @@ class TelegramFileSystem:
 class TelegramApi:
     def __init__(self, client: pyrogram.Client) -> None:
         self._client = client
-
-    @utils.retry(3)
-    async def upload_empty_file(self, chat_id: str | int, file: abstract.File) -> int:
-        msg = await self._client.send_document(
-                chat_id=chat_id,
-                document=io.BytesIO(b""),
-                file_name=file.name,
-                force_document=True
-            )
-        if msg is None:
-                raise exceptions.RetryableError(f"Cannot upload file {file.name}")
-        return msg.message_id
         
     @utils.retry(3)
-    async def upload_file(self, chat_id: str | int, file: abstract.File, msg_id: int = None, progres=lambda x, y: None) -> int:
+    async def upload_file(self, chat_id: str | int, file: abstract.File, msg_id: int | None = None, progres=lambda x, y: None) -> int:
+        if file.get_size() == 0:
+            return 0
+        
+        if msg_id == 0:
+            msg_id = None
+        
         if msg_id is not None:
             msg = await self._client.edit_message_media(
                 chat_id=chat_id,
@@ -207,6 +202,10 @@ class TelegramApi:
     
     @utils.retry(3)
     async def download_file(self, chat_id: str | int, file_path: str, msg_id: int, progres=lambda x, y: None):
+        if msg_id == 0:
+            if not os.path.exists(file_path):
+                open(file_path, 'x').close()
+            return
         msg = await self._client.get_messages(chat_id=chat_id, message_ids=msg_id)
         await self._client.download_media(
             msg,
@@ -216,4 +215,6 @@ class TelegramApi:
     
     @utils.retry(3)
     async def delete_msg(self, chat_id: str | int, msg_id: int) -> None:
+        if msg_id == 0:
+            return
         await self._client.delete_messages(chat_id=chat_id, message_ids=msg_id)

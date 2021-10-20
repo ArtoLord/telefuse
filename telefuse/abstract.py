@@ -1,4 +1,5 @@
 import abc
+import os
 
 
 class File(abc.ABC):
@@ -13,3 +14,6 @@ class File(abc.ABC):
     @abc.abstractmethod
     def get_hash(self) -> str:
         pass
+    
+    def get_size(self) -> int:
+        return os.path.getsize(self.real_path)
