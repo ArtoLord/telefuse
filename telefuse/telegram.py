@@ -83,12 +83,18 @@ class OperationCtx:
         return self
     
     def add(self, f: abstract.File):
+        if f.path in ('.telefs_index', '.telefs'):
+            return
         self._files_to_add.append(f)
     
     def get(self, f: abstract.File):
+        if f.path in ('.telefs_index', '.telefs'):
+            return
         self._files_to_get.append(f)
     
     def delete(self, f: abstract.File):
+        if f.path in ('.telefs_index', '.telefs'):
+            return
         self._files_to_delete.append(f)
     
     async def __upload(self, file: abstract.File):
@@ -108,17 +114,28 @@ class OperationCtx:
         delete = {file.path: file for file in self._files_to_delete}
         get = {file.path: file for file in self._files_to_get}
         
+        if not add and not get and not delete:
+            return
+        
         for key in add:
             get.pop(key, None)
         for key in delete:
             add.pop(key, None)
             get.pop(key, None)
         
+        files = set(self._fs.files)
+        for key in delete.copy():
+            if key not in files:
+                delete.pop(key)
+        
         tasks = [self.__upload(file) for file in add.values()]
         tasks.extend(self.__get(file) for file in get.values())
         tasks.extend(self.__delete(file) for file in delete.values())
         await asyncio.gather(*tasks)
         await self._fs.save()
+        self._files_to_add = []
+        self._files_to_delete = []
+        self._files_to_get = []
     
     async def __aexit__(self, exception_type, exception_value, exception_traceback):
         if exception_type is None:

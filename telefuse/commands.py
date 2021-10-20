@@ -1,5 +1,6 @@
 import abc
 import argparse
+import asyncio
 from . import config
 import typing
 from . import telegram
@@ -10,6 +11,8 @@ import os
 import json
 from . import config
 from . import utils
+from .wather import Wather
+import signal
 
 
 class ProgressBar:
@@ -80,7 +83,8 @@ def init_commands(client: pyrogram.Client, parser: argparse._SubParsersAction, a
         Clone,
         Status,
         Download,
-        Upload
+        Upload,
+        Wath
     ]
     
     return [
@@ -404,4 +408,38 @@ class Upload(Command):
                 current_path = os.path.join(fs_config.dir_path, filepath)
                 f = File(filepath, current_path, pb)
                 op.delete(f)
+
+
+class Wath(Command):
+    
+    @classmethod
+    def edit_argparser(cls, parser: argparse._SubParsersAction) -> argparse.ArgumentParser:
+        arg = parser.add_parser("wath", description="Wath to fs and upload local modifications syncroniusely")
+        return arg
+
+    @classmethod
+    async def run(cls, client: pyrogram.Client, args: argparse.Namespace, app_config: config.AppConfig, fs_config: config.FsConfig | None):
+        if fs_config is None:
+            raise exceptions.WrongIndexException("Index not found")
+        fs = await telegram.TelegramFileSystem.with_telegram_api(
+            telegram.TelegramApi(client),
+            client,
+            fs_config.chat_id,
+            fs_config.index_name,
+            os.path.join(fs_config.dir_path, '.telefs_index')
+        )
+        
+        pb = ProgressBar()
+        
+        def file_factory(path: str) -> File:
+            return File(fs_config.get_path(path), path, pb)
+
+        wather = Wather(fs, file_factory)
+        
+        client.loop.add_signal_handler(
+            signal.SIGINT, lambda: asyncio.create_task(wather.stop())
+        )
+        
+        await wather.start_and_wait(fs_config.dir_path, fs_config)
+        
     

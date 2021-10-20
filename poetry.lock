@@ -15,6 +15,14 @@ optional = false
 python-versions = "*"
 
 [[package]]
+name = "asyncinotify"
+version = "2.0.2"
+description = "A simple optionally-async python inotify library, focused on simplicity of use and operation, and leveraging modern Python features"
+category = "main"
+optional = false
+python-versions = "*"
+
+[[package]]
 name = "fs"
 version = "2.4.13"
 description = "Python's filesystem abstraction layer"
@@ -109,7 +117,7 @@ python-versions = "*"
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.10"
-content-hash = "f11a0444dfbb0b6d74c2292fad45f9ce346674c5670e7af68d65a4a642b77039"
+content-hash = "e8289f7cdd6e461b0d205653b9252b4b8fb7e3704396af9415a8de0556fe3937"
 
 [metadata.files]
 appdirs = [
@@ -118,6 +126,10 @@ appdirs = [
 ]
 async-lru = [
     {file = "async_lru-1.0.2.tar.gz", hash = "sha256:baa898027619f5cc31b7966f96f00e4fc0df43ba206a8940a5d1af5336a477cb"},
+]
+asyncinotify = [
+    {file = "asyncinotify-2.0.2-py3-none-any.whl", hash = "sha256:26fa85d282df0066ab423cd96754d7ea07e6013d8a69a51e573303dbd0d2dff6"},
+    {file = "asyncinotify-2.0.2.tar.gz", hash = "sha256:867cc056d88fc07aa8b3d1dc5b9c3c911cdd6130a4df5f67beb1fdecfd37b164"},
 ]
 fs = [
     {file = "fs-2.4.13-py2.py3-none-any.whl", hash = "sha256:1d10cc8f9c55fbcf7b23775289a13f6796dca7acd5a135c379f49e87a56a7230"},
