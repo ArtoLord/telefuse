@@ -1,8 +1,10 @@
 import functools
 import typing
-from pyrogram.errors import RPCError
+from pyrogram.errors import RPCError, MessageNotModified
 import time
 from . import exceptions
+
+import hashlib
 
 
 # Print iterations progress
@@ -30,7 +32,8 @@ def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, 
 
 def retry(max_num: int, allowed_errors: list[typing.Type[Exception]] = None, sleep_time:float = 1):
     if allowed_errors is None:
-        allowed_errors = [RPCError, exceptions.RetryableError]
+        retryeble = [RPCError, exceptions.RetryableError]
+    allowed = [MessageNotModified]
     def decorator(f: typing.Callable[..., typing.Awaitable]):
         @functools.wraps(f)
         async def wrapper(*args, **kwargs):
@@ -38,10 +41,33 @@ def retry(max_num: int, allowed_errors: list[typing.Type[Exception]] = None, sle
                 try:
                     return await f(*args, **kwargs)
                 except Exception as e:
-                    if type(e) not in allowed_errors:
+                    if type(e) in allowed:
+                        return
+                    if type(e) not in retryeble:
                         raise e
                     if i == max_num - 1:
                         raise e
                     time.sleep(sleep_time)
         return wrapper
     return decorator
+
+
+def hash_file(filename: str) -> str:
+   """"This function returns the SHA-1 hash
+   of the file passed into it"""
+
+   # make a hash object
+   h = hashlib.sha1()
+
+   # open file for reading in binary mode
+   with open(filename,'rb') as file:
+
+       # loop till the end of the file
+       chunk = 0
+       while chunk != b'':
+           # read only 1024 bytes at a time
+           chunk = file.read(1024)
+           h.update(chunk)
+
+   # return the hex representation of digest
+   return h.hexdigest()

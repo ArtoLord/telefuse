@@ -9,3 +9,7 @@ class File(abc.ABC):
     @abc.abstractmethod
     def progress(self, curr: int, total: int):
         pass
+    
+    @abc.abstractmethod
+    def get_hash(self) -> str:
+        pass

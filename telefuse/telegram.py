@@ -7,36 +7,112 @@ from .exceptions import WrongIndexException
 from . import abstract
 import io
 from . import exceptions
+import asyncio
 
+
+class TelegramFile(BaseModel):
+    name: str
+    path: str
+    msg_id: int
+    filehash: str
+    
+    @classmethod
+    def from_abstract(cls, f: abstract.File, msg_id: int) -> "TelegramFile":
+        return cls(
+            name = f.name,
+            path = f.path,
+            msg_id = msg_id,
+            filehash = f.get_hash()
+        )
+    
 
 class FileSystemIndex(BaseModel):
-    files: dict[str, int]
+    files: dict[str, TelegramFile]
     index_name: str
     message_id: int = 0
     
     @classmethod
     @utils.retry(3)
     async def _get(cls, client: pyrogram.Client, chat_id: str | int, index_name: str) -> "FileSystemIndex":
-        async with client:
-            res = client.search_messages(chat_id=chat_id, query=f"[{index_name}]", limit=1)
-            try:
-                res = await res.__anext__()
-            except StopAsyncIteration:
-                raise WrongIndexException(f"Can not find index with name {index_name}")
-            msg = res.text
-            msg = ''.join(msg.split('\n')[1:])
-            try:
-                return cls(**json.loads(msg))
-            except Exception:
-                raise WrongIndexException("Index is corrupted")
+        res = client.search_messages(chat_id=chat_id, query=f"[{index_name}]", limit=1)
+        try:
+            res = await res.__anext__()
+        except StopAsyncIteration:
+            raise WrongIndexException(f"Can not find index with name {index_name}")
+        msg = res.text
+        msg = ''.join(msg.split('\n')[1:])
+        try:
+            return cls(**json.loads(msg))
+        except Exception:
+            raise WrongIndexException("Index is corrupted")
     
     @utils.retry(3)
     async def save(self, client: pyrogram.Client, chat_id: str | int):
-        async with client:
-            if self.message_id == 0:
-                msg = await client.send_message(chat_id=chat_id, text=f"[{self.index_name}]\n{self.json()}")
-                self.message_id = msg.message_id
-            await client.edit_message_text(chat_id=chat_id, text=f"[{self.index_name}]\n{self.json()}", message_id=self.message_id)
+        if self.message_id == 0:
+            msg = await client.send_message(chat_id=chat_id, text=f"[{self.index_name}]\n{self.json()}")
+            self.message_id = msg.message_id
+        await client.edit_message_text(chat_id=chat_id, text=f"[{self.index_name}]\n{self.json()}", message_id=self.message_id)
+
+
+class OperationCtx:
+    def __init__(self, fs: "TelegramFileSystem", max_inflight: int) -> None:
+        self._semaphore = asyncio.Semaphore(max_inflight)
+        self._files_to_get: list[abstract.File] = []
+        self._files_to_add: list[abstract.File] = []
+        self._files_to_delete: list[abstract.File] = []
+        self._fs = fs
+        
+    async def __aenter__(self):
+        self._files_to_get = []
+        self._files_to_add = []
+        self._files_to_delete = []
+        return self
+    
+    def add(self, f: abstract.File):
+        self._files_to_add.append(f)
+    
+    def get(self, f: abstract.File):
+        self._files_to_get.append(f)
+    
+    def delete(self, f: abstract.File):
+        self._files_to_delete.append(f)
+    
+    async def __upload(self, file: abstract.File):
+        async with self._semaphore:
+            await self._fs.init_file(file, with_save=False)
+    
+    async def __get(self, file: abstract.File):
+        async with self._semaphore:
+            await self._fs.get_file(file)
+
+    async def __delete(self, file: abstract.File):
+        async with self._semaphore:
+            await self._fs.remove_file(file, with_save=False)
+    
+    async def save(self):
+        add = {file.path: file for file in self._files_to_add}
+        delete = {file.path: file for file in self._files_to_delete}
+        get = {file.path: file for file in self._files_to_get}
+        
+        for key in add:
+            get.pop(key, None)
+        for key in delete:
+            add.pop(key, None)
+            get.pop(key, None)
+        
+        tasks = [self.__upload(file) for file in add.values()]
+        tasks.extend(self.__get(file) for file in get.values())
+        tasks.extend(self.__delete(file) for file in delete.values())
+        await asyncio.gather(*tasks)
+        await self._fs.save()
+    
+    async def __aexit__(self, exception_type, exception_value, exception_traceback):
+        if exception_type is None:
+            await self.save()
+            self._files_to_get = []
+            self._files_to_add = []
+            self._files_to_delete = []
+
 
 class TelegramFileSystem:
     
@@ -50,33 +126,44 @@ class TelegramFileSystem:
     def files(self) -> typing.Iterable[str]:
         return iter(self._index.files)
     
+    def get_file_from_local_index(self, file_path: str) -> TelegramFile | None:
+        return self._index.files.get(file_path)
+    
     @classmethod
     async def with_telegram_api(cls, api: "TelegramApi", client: pyrogram.Client, chat_id: str | int, index_name: str) -> "TelegramFileSystem":
         index = await FileSystemIndex._get(client=client, chat_id=chat_id, index_name=index_name)
         return cls(api, index, chat_id, client)
     
-    async def init_file(self, file: abstract.File) -> None:
-        msg_id = self._index.files.get(file.path)
-        msg_id = await self._api.upload_file(self._chat_id, file, msg_id=msg_id, progres=file.progress)
-        self._index.files[file.path] = msg_id
-        await self._index.save(self._client, self._chat_id)
+    async def init_file(self, file: abstract.File, with_save: bool = True) -> None:
+        msg_id = None if not self._index.files.get(file.path) else self._index.files[file.path].msg_id
+        curr_msg_id = await self._api.upload_file(self._chat_id, file, msg_id=msg_id, progres=file.progress)
+        self._index.files[file.path] = TelegramFile.from_abstract(file, curr_msg_id)
+        if with_save:
+            await self._index.save(self._client, self._chat_id)
     
     async def get_file(self, file: abstract.File):
-        msg_id = self._index.files.get(file.path)
-        if msg_id is None:
+        f = self._index.files.get(file.path)
+        if f is None:
             raise exceptions.FileNotFound(f"No file {file.path} in index")
-        await self._api.download_file(chat_id=self._chat_id, file_path=file.real_path, msg_id=msg_id, progres=file.progress)
+        await self._api.download_file(chat_id=self._chat_id, file_path=file.real_path, msg_id=f.msg_id, progres=file.progress)
     
-    async def remove_file(self, file: abstract.File) -> None:
-        msg_id = self._index.files.get(file.path)
-        if msg_id is None:
+    async def remove_file(self, file: abstract.File, with_save: bool = True) -> None:
+        f = self._index.files.get(file.path)
+        if f is None:
             raise exceptions.FileNotFound(f"No file {file.path} in index")
-        msg_id = await self._api.delete_msg(self._chat_id, msg_id)
+        await self._api.delete_msg(self._chat_id, f.msg_id)
         self._index.files.pop(file.path)
-        await self._index.save(self._client, self._chat_id)
+        if with_save:
+            await self._index.save(self._client, self._chat_id)
     
     async def save(self):
         await self._index.save(self._client, self._chat_id)
+    
+    def clone(self) -> "TelegramFileSystem":
+        return TelegramFileSystem(self._api, self._index.copy(), self._chat_id, self._client)
+    
+    def operation(self, max_inflight: int = 15) -> OperationCtx:
+        return OperationCtx(self.clone(), max_inflight)
 
 
 class TelegramApi:
@@ -97,39 +184,36 @@ class TelegramApi:
         
     @utils.retry(3)
     async def upload_file(self, chat_id: str | int, file: abstract.File, msg_id: int = None, progres=lambda x, y: None) -> int:
-        async with self._client:
-            if msg_id is not None:
-                msg = await self._client.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    file_name=file.name,
-                    media=pyrogram.types.InputMediaDocument(
-                        media=file.real_path,
-                    )
-                )
-                return msg.message_id
-            msg = await self._client.send_document(
+        if msg_id is not None:
+            msg = await self._client.edit_message_media(
                 chat_id=chat_id,
-                document=file.real_path,
+                message_id=msg_id,
                 file_name=file.name,
-                force_document=True,
-                progress=progres
+                media=pyrogram.types.InputMediaDocument(
+                    media=file.real_path,
+                )
             )
-            if msg is None:
-                raise exceptions.RetryableError(f"Cannot upload file {file.name}")
             return msg.message_id
+        msg = await self._client.send_document(
+            chat_id=chat_id,
+            document=file.real_path,
+            file_name=file.name,
+            force_document=True,
+            progress=progres
+        )
+        if msg is None:
+            raise exceptions.RetryableError(f"Cannot upload file {file.name}")
+        return msg.message_id
     
     @utils.retry(3)
     async def download_file(self, chat_id: str | int, file_path: str, msg_id: int, progres=lambda x, y: None):
-        async with self._client:
-            msg = await self._client.get_messages(chat_id=chat_id, message_ids=msg_id)
-            await self._client.download_media(
-                msg,
-                file_name=file_path,
-                progress=progres
-            )
+        msg = await self._client.get_messages(chat_id=chat_id, message_ids=msg_id)
+        await self._client.download_media(
+            msg,
+            file_name=file_path,
+            progress=progres
+        )
     
     @utils.retry(3)
     async def delete_msg(self, chat_id: str | int, msg_id: int) -> None:
-        async with self._client:
-            await self._client.delete_messages(chat_id=chat_id, message_ids=msg_id)
+        await self._client.delete_messages(chat_id=chat_id, message_ids=msg_id)

@@ -1,3 +1,4 @@
+import asyncio
 from . import config
 import pyrogram
 import os
@@ -28,6 +29,7 @@ def main():
     commands.init_commands(client, args.add_subparsers(), app_config, fs_config)
     
     args = args.parse_args()
+    asyncio.set_event_loop(client.loop)
     
     try:
         client.run(args.func(args))
